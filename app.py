@@ -60,10 +60,16 @@ with analysis_tab:
                 
                 # 2. AI Analysis
                 prompt = f"""
-                Compare CV to JD. Return JSON ONLY.
-                JD: {jd_input}
-                CV: {cv_text}
-                JSON Format: {{"name": "str", "score": int, "top_skill": "str", "verdict": "str"}}
+Act as a professional recruiter. Compare this CV to the Job Description.
+RETURN ONLY A JSON OBJECT. DO NOT INCLUDE MARKDOWN BLOCKS.
+Expected JSON Keys: 
+"name": Candidate full name
+"score": A number from 0-100
+"verdict": A 1-sentence summary
+
+JD: {jd_text}
+CV: {cv_text}
+"""
                 """
                 response = model.generate_content(prompt)
                 
