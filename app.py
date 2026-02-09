@@ -3,27 +3,30 @@ import google.generativeai as genai
 from pypdf import PdfReader
 import pandas as pd
 import json
+import time
 
 # --- CONFIG & STYLING ---
 st.set_page_config(page_title="TalentScan AI", layout="wide", page_icon="🔍")
 
-# Injecting Custom CSS for a modern "SaaS" look
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
-    .css-1r6slb0 { background-color: white; border-radius: 15px; padding: 2rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
     .main-header { font-size: 2.5rem; font-weight: 800; color: #1e293b; margin-bottom: 1rem; }
+    .card { background-color: white; border-radius: 15px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
     </style>
     """, unsafe_allow_html=True)
 
-# --- SIDEBAR & KEYS ---
+# --- SIDEBAR: AUTH & SETTINGS ---
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/1055/1055644.png", width=100)
-    st.title("TalentScan Settings")
-    gemini_key = st.text_input("Gemini API Key", type="password")
-    # For a rookie, we'll stick to a simple upload but mention Drive integration below
+    st.image("https://cdn-icons-png.flaticon.com/512/1055/1055644.png", width=80)
+    st.title("Settings")
+    
+    # Best Practice: Try to get key from secrets first, else use input
+    secret_key = st.secrets.get("GEMINI_API_KEY", "")
+    api_key = st.text_input("Gemini API Key", value=secret_key, type="password")
+    
     st.divider()
-    st.info("💡 To use Google Drive, ensure your API keys are set in Streamlit Secrets.")
+    st.info("📊 Model: Gemini 2.0 Flash\n\nSpeed: Optimized")
 
 # --- MAIN INTERFACE ---
 st.markdown('<div class="main-header">🚀 AI Recruitment Dashboard</div>', unsafe_allow_html=True)
@@ -31,111 +34,97 @@ st.markdown('<div class="main-header">🚀 AI Recruitment Dashboard</div>', unsa
 jd_tab, analysis_tab = st.tabs(["📌 Job Requirement", "📊 Candidate Ranking"])
 
 with jd_tab:
-    jd_input = st.text_area("Paste Job Description Here", height=300, placeholder="Required skills, years of experience...")
+    jd_input = st.text_area("Paste Job Description Here", height=300, placeholder="Describe the ideal candidate...")
 
 with analysis_tab:
     col1, col2 = st.columns([1, 1])
     with col1:
-        uploaded_files = st.file_uploader("Upload CVs", accept_multiple_files=True, type=['pdf'])
+        uploaded_files = st.file_uploader("Upload CVs (PDF)", accept_multiple_files=True, type=['pdf'])
     with col2:
-        st.write("--- or ---")
-        # In a real cloud env, this button triggers the Google Picker pop-up
+        st.write("---")
+        st.caption("Cloud Storage (Google Drive) Integration")
         if st.button("📁 Import from Google Drive"):
-            st.warning("Cloud integration requires OAuth setup. Currently using Local Upload.")
+            st.warning("To enable this, configure Google Picker API in your Cloud Console.")
 
-    if st.button("⚡ Start Shortlisting") and jd_input and uploaded_files:
-        if not gemini_key:
-            st.error("Missing Gemini API Key!")
+    if st.button("⚡ Start Shortlisting"):
+        if not api_key:
+            st.error("Please provide a Gemini API Key in the sidebar.")
+        elif not jd_input or not uploaded_files:
+            st.warning("Please provide both a Job Description and at least one CV.")
         else:
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel('gemini-2.0-flash')
+            # Configure AI
+            genai.configure(api_key=api_key)
+            # Use JSON mode for best practices
+            model = genai.GenerativeModel(
+                model_name='gemini-2.0-flash',
+                generation_config={"response_mime_type": "application/json"}
+            )
             
-            final_data = []
+            final_results = []
             progress_bar = st.progress(0)
+            status_text = st.empty()
             
             for i, file in enumerate(uploaded_files):
-                # 1. Extract Text
-                reader = PdfReader(file)
-                cv_text = " ".join([page.extract_text() for page in reader.pages])
+                status_text.text(f"Analyzing: {file.name}...")
                 
-                # 2. AI Analysis
-                prompt = f"""
-Act as a professional recruiter. Compare this CV to the Job Description.
-RETURN ONLY A JSON OBJECT. DO NOT INCLUDE MARKDOWN BLOCKS.
-Expected JSON Keys: 
-"name": Candidate full name
-"score": A number from 0-100
-"verdict": A 1-sentence summary
-
-JD: {jd_text}
-CV: {cv_text}
-"""
-                """
-                response = model.generate_content(prompt)
-                
-                # 3. Parse and Store
                 try:
-                    # Cleaning common AI markdown artifacts
-                    clean_json = response.text.replace('```json', '').replace('```', '')
-                    final_data.append(json.loads(clean_json))
-                except:
-                    st.error(f"Error parsing {file.name}")
+                    # 1. Extract Text
+                    reader = PdfReader(file)
+                    cv_text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
+                    
+                    # 2. AI Prompt
+                    prompt = f"""
+                    Act as an expert technical recruiter. Compare the CV to the Job Description.
+                    Return a JSON object with:
+                    - "name": Full name of candidate
+                    - "score": Numeric match score (0-100)
+                    - "verdict": Short professional fit summary
+                    
+                    JD: {jd_input}
+                    CV: {cv_text}
+                    """
+                    
+                    response = model.generate_content(prompt)
+                    
+                    # 3. Safe Parsing
+                    res_json = json.loads(response.text)
+                    # Ensure filename is added for reference
+                    if "name" not in res_json or res_json["name"] == "Candidate Name":
+                        res_json["name"] = file.name
+                        
+                    final_results.append(res_json)
+                    
+                except Exception as e:
+                    st.error(f"Could not process {file.name}: {str(e)}")
                 
                 progress_bar.progress((i + 1) / len(uploaded_files))
-
-
-
-# Convert the list of AI results into a DataFrame
-df = pd.DataFrame(results)
-
-if not df.empty:
-    # 1. Clean column names (remove spaces and make lowercase)
-    df.columns = df.columns.str.strip().str.lower()
-    
-    # 2. Safety Check: If 'score' is missing, look for common AI variations
-    if 'score' not in df.columns:
-        # Check if AI used "match_score", "ranking", or "fit_score"
-        for alt in ['match_score', 'ranking', 'rating', 'fit_score']:
-            if alt in df.columns:
-                df = df.rename(columns={alt: 'score'})
-                break
-    
-    # 3. Final Fallback: If 'score' is STILL missing, create it so the app doesn't crash
-    if 'score' not in df.columns:
-        st.warning("⚠️ AI provided inconsistent data. Adding a default score column.")
-        df['score'] = 0
-    
-    # 4. Clean the Score (AI sometimes sends "85%" as a string; we need the number 85)
-    df['score'] = pd.to_numeric(
-        df['score'].astype(str).str.replace('%', '').str.strip(), 
-        errors='coerce'
-    ).fillna(0)
-
-    # 5. Now it is safe to sort!
-    df = df.sort_values(by="score", ascending=False)
-    
-    st.subheader("🏆 Ranked Candidates")
-    st.dataframe(
-        df, 
-        use_container_width=True,
-        column_config={
-            "score": st.column_config.ProgressColumn("Match Score", min_value=0, max_value=100, format="%d%%")
-        }
-    )
-else:
-    st.error("❌ No candidates were analyzed successfully. Check your API key or CV text.")
-    st.subheader("🏆 Ranked Candidates")
-    st.dataframe(df, use_container_width=True)
-
             
-            # 4. Display Results in a Beautiful Table
-            df = pd.DataFrame(final_data)
-            st.subheader("🏆 Ranked Candidates")
-            st.dataframe(
-                df.sort_values(by="score", ascending=False),
-                column_config={
-                    "score": st.column_config.ProgressColumn("Match Score", min_value=0, max_value=100),
-                    "verdict": st.column_config.TextColumn("AI Summary", width="large")
-                },
-                use_container_width=True
-            )
+            status_text.text("Analysis Complete!")
+
+            # --- DATA PROCESSING & SORTING ---
+            if final_results:
+                df = pd.DataFrame(final_results)
+                
+                # Standardize Columns
+                df.columns = df.columns.str.strip().str.lower()
+                
+                # Column check for 'score'
+                if 'score' in df.columns:
+                    df['score'] = pd.to_numeric(df['score'], errors='coerce').fillna(0)
+                    df = df.sort_values(by="score", ascending=False)
+                
+                st.subheader("🏆 Ranked Candidates")
+                st.dataframe(
+                    df,
+                    use_container_width=True,
+                    column_config={
+                        "score": st.column_config.ProgressColumn("Match Score", min_value=0, max_value=100, format="%d%%"),
+                        "verdict": st.column_config.TextColumn("AI Summary", width="large")
+                    }
+                )
+                
+                # Export Feature
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Download Report (CSV)", data=csv, file_name="shortlist_report.csv", mime="text/csv")
+            else:
+                st.error("No data could be extracted. Please check the PDF contents.")
