@@ -77,6 +77,51 @@ with analysis_tab:
                 
                 progress_bar.progress((i + 1) / len(uploaded_files))
 
+
+
+# Convert the list of AI results into a DataFrame
+df = pd.DataFrame(results)
+
+if not df.empty:
+    # 1. Clean column names (remove spaces and make lowercase)
+    df.columns = df.columns.str.strip().str.lower()
+    
+    # 2. Safety Check: If 'score' is missing, look for common AI variations
+    if 'score' not in df.columns:
+        # Check if AI used "match_score", "ranking", or "fit_score"
+        for alt in ['match_score', 'ranking', 'rating', 'fit_score']:
+            if alt in df.columns:
+                df = df.rename(columns={alt: 'score'})
+                break
+    
+    # 3. Final Fallback: If 'score' is STILL missing, create it so the app doesn't crash
+    if 'score' not in df.columns:
+        st.warning("⚠️ AI provided inconsistent data. Adding a default score column.")
+        df['score'] = 0
+    
+    # 4. Clean the Score (AI sometimes sends "85%" as a string; we need the number 85)
+    df['score'] = pd.to_numeric(
+        df['score'].astype(str).str.replace('%', '').str.strip(), 
+        errors='coerce'
+    ).fillna(0)
+
+    # 5. Now it is safe to sort!
+    df = df.sort_values(by="score", ascending=False)
+    
+    st.subheader("🏆 Ranked Candidates")
+    st.dataframe(
+        df, 
+        use_container_width=True,
+        column_config={
+            "score": st.column_config.ProgressColumn("Match Score", min_value=0, max_value=100, format="%d%%")
+        }
+    )
+else:
+    st.error("❌ No candidates were analyzed successfully. Check your API key or CV text.")
+    st.subheader("🏆 Ranked Candidates")
+    st.dataframe(df, use_container_width=True)
+
+            
             # 4. Display Results in a Beautiful Table
             df = pd.DataFrame(final_data)
             st.subheader("🏆 Ranked Candidates")
