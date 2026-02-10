@@ -73,3 +73,90 @@ with analysis_tab:
 
             for i, file in enumerate(uploaded_files):
                 # UI Update
+                current_name = file.name
+                status_text.text(f"Analyzing {i+1}/{len(uploaded_files)}: {current_name}")
+                
+                try:
+                    # A. PDF TEXT EXTRACTION
+                    reader = PdfReader(file)
+                    # Limit to first 3 pages to save tokens and avoid errors
+                    cv_text = " ".join([page.extract_text() for page in reader.pages[:3] if page.extract_text()])
+                    
+                    if not cv_text.strip():
+                        st.error(f"Skipping {current_name}: No readable text found.")
+                        continue
+
+                    # B. AI ANALYSIS
+                    prompt = f"""
+                    Act as an HR expert. Compare the CV to the JD. 
+                    Return ONLY JSON with these keys: "name", "score", "verdict".
+                    
+                    JD: {jd_input}
+                    CV Text: {cv_text}
+                    """
+                    
+                    response = model.generate_content(prompt)
+                    
+                    # C. SAFE JSON PARSING
+                    try:
+                        # Ensure we handle the response text safely
+                        analysis = json.loads(response.text)
+                        # Fallback if name is missing from AI
+                        if "name" not in analysis or analysis["name"] == "Candidate Name":
+                            analysis["name"] = current_name
+                        
+                        final_results.append(analysis)
+                    except json.JSONDecodeError:
+                        st.error(f"AI returned invalid format for {current_name}")
+
+                    # D. RATE LIMIT PROTECTION (Important for Free Trials)
+                    time.sleep(2) 
+
+                except Exception as e:
+                    if "429" in str(e):
+                        st.error("🚦 Rate Limit Reached. Pausing for 10 seconds...")
+                        time.sleep(10)
+                    else:
+                        st.error(f"Error processing {current_name}: {str(e)}")
+                
+                # Update progress
+                progress_bar.progress((i + 1) / len(uploaded_files))
+
+            status_text.success("✅ Analysis Complete!")
+
+            # --- 5. DATA VISUALIZATION ---
+            if final_results:
+                df = pd.DataFrame(final_results)
+                
+                # Force Score to Numeric (Removes "KeyError: score" issues)
+                df.columns = df.columns.str.strip().str.lower()
+                if 'score' in df.columns:
+                    df['score'] = pd.to_numeric(df['score'], errors='coerce').fillna(0)
+                    df = df.sort_values(by="score", ascending=False)
+                
+                st.divider()
+                st.subheader("🏆 Candidate Rankings")
+                
+                # Beautiful Table Display
+                st.dataframe(
+                    df,
+                    use_container_width=True,
+                    column_config={
+                        "score": st.column_config.ProgressColumn(
+                            "Match Score", min_value=0, max_value=100, format="%d%%"
+                        ),
+                        "verdict": st.column_config.TextColumn("AI Insight", width="large"),
+                        "name": "Candidate Name"
+                    }
+                )
+                
+                # CSV Export
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Shortlist Report",
+                    data=csv,
+                    file_name="ai_recruitment_report.csv",
+                    mime="text/csv",
+                )
+            else:
+                st.info("No candidates were successfully analyzed.")
