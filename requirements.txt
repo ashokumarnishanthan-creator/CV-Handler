@@ -4,6 +4,4 @@ google-generativeai
 pypdf
 pandas
 python-docx
-streamlit-google-picker
-
 streamlit-oauth
