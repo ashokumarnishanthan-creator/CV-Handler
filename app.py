@@ -69,9 +69,22 @@ with analysis_tab:
                 
                 try:
                     # 1. Extract Text
-                    reader = PdfReader(file)
-                    cv_text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
-                    
+                    for i, file in enumerate(uploaded_files):
+    try:
+        # 1. SMART EXTRACTION
+        # Check if 'file' is a dictionary (from Picker) or an object (from Upload)
+        if isinstance(file, dict):
+            # This handles the Google Picker data structure
+            file_name = file.get("name", f"Candidate_{i}")
+            # If using Picker, you need to download/access the bytes correctly
+            # Note: For rookies, local upload is more stable than Picker bytes
+            st.error(f"Google Picker requires additional API auth to read content.")
+            continue 
+        else:
+            # This handles standard Streamlit UploadedFile
+            file_name = file.name
+            reader = PdfReader(file)
+            cv_text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
                     # 2. AI Prompt
                     prompt = f"""
                     Act as an expert technical recruiter. Compare the CV to the Job Description.
