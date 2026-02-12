@@ -5,3 +5,4 @@ pypdf
 pandas
 python-docx
 streamlit-oauth
+streamlit-pdf-viewer
